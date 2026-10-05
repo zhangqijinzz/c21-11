@@ -4,7 +4,8 @@ export interface RequestNode {
   durationMs: number;
   jitterMs: number;
   dependencyIds: string[];
-  timeoutMs: number;
+  /** 超时阈值（毫秒）。null 表示不限制；0 是普通的 0 ms 阈值，会立即截断。 */
+  timeoutMs: number | null;
   retryCount: number;
   failureRate: number;
   fallbackNodeId?: string;
@@ -31,7 +32,7 @@ export interface LatencyProject {
 }
 
 export interface WorkspaceDocument {
-  version: 1;
+  version: 2;
   activeProjectId: string;
   projects: LatencyProject[];
 }

@@ -11,7 +11,7 @@ function expectedAttempts(node: RequestNode, mode: SimulationMode): number {
   const jitterFactor = mode === "low" ? 0 : mode === "high" ? 1 : 0.5;
   const serviceMs = Math.min(
     node.durationMs + node.jitterMs * jitterFactor,
-    node.timeoutMs || Number.POSITIVE_INFINITY,
+    node.timeoutMs ?? Number.POSITIVE_INFINITY,
   );
   const failure = node.failureRate / 100;
   let elapsed = 0;
@@ -131,7 +131,7 @@ export function simulateProject(
   if (
     project.nodes.some(
       (node) =>
-        node.timeoutMs > 0 &&
+        node.timeoutMs !== null &&
         node.durationMs +
           node.jitterMs *
             (mode === "high" ? 1 : mode === "expected" ? 0.5 : 0) >

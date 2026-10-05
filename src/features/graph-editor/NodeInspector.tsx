@@ -17,10 +17,19 @@ const numericFields: {
   suffix: string;
   step: number;
   max?: number;
+  nullable?: boolean;
+  note?: string;
 }[] = [
   { key: "durationMs", label: "预计耗时", suffix: "ms", step: 10 },
   { key: "jitterMs", label: "延迟波动", suffix: "±ms", step: 10 },
-  { key: "timeoutMs", label: "超时阈值", suffix: "ms", step: 50 },
+  {
+    key: "timeoutMs",
+    label: "超时阈值",
+    suffix: "ms",
+    step: 50,
+    nullable: true,
+    note: "留空表示不限制；0 是 0 ms 阈值，会立即截断。",
+  },
   { key: "retryCount", label: "重试次数", suffix: "次", step: 1, max: 8 },
   { key: "failureRate", label: "失败概率", suffix: "%", step: 1, max: 100 },
 ];
@@ -56,24 +65,34 @@ export default function NodeInspector({
           />
         </label>
         <div className="field-grid">
-          {numericFields.map(({ key, label, suffix, step, max }) => (
-            <label className="field-label" key={key}>
-              {label}
-              <span className="number-wrap">
-                <input
-                  type="number"
-                  min="0"
-                  max={max}
-                  step={step}
-                  value={node[key]}
-                  onChange={(event) =>
-                    onPatch(node.id, { [key]: Number(event.target.value) })
-                  }
-                />
-                <small>{suffix}</small>
-              </span>
-            </label>
-          ))}
+          {numericFields.map(
+            ({ key, label, suffix, step, max, nullable, note }) => (
+              <label className="field-label" key={key}>
+                {label}
+                <span className="number-wrap">
+                  <input
+                    type="number"
+                    min="0"
+                    max={max}
+                    step={step}
+                    placeholder={nullable ? "不限" : undefined}
+                    value={node[key] ?? ""}
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      onPatch(
+                        node.id,
+                        nullable && raw === ""
+                          ? { timeoutMs: null }
+                          : { [key]: Number(raw) },
+                      );
+                    }}
+                  />
+                  <small>{suffix}</small>
+                </span>
+                {note ? <small className="field-note">{note}</small> : null}
+              </label>
+            ),
+          )}
         </div>
         <div className="dependency-section">
           <div className="field-title">

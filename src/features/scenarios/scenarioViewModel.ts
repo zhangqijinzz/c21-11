@@ -11,6 +11,10 @@ export interface ScenarioComparison {
   outcome: "faster" | "slower" | "equal";
 }
 
+function describeTimeout(value: number | null): string {
+  return value === null ? "不限" : `${value} ms`;
+}
+
 function describeNodeChanges(
   before: RequestNode,
   after: RequestNode,
@@ -26,7 +30,7 @@ function describeNodeChanges(
     );
   if (before.timeoutMs !== after.timeoutMs)
     changes.push(
-      `${before.name} · 超时 ${before.timeoutMs} → ${after.timeoutMs} ms`,
+      `${before.name} · 超时 ${describeTimeout(before.timeoutMs)} → ${describeTimeout(after.timeoutMs)}`,
     );
   if (before.retryCount !== after.retryCount)
     changes.push(

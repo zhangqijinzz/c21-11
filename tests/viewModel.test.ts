@@ -15,7 +15,7 @@ import { EXAMPLE_PROJECT } from "../src/shared/domain/types";
 describe("project and scenario view models", () => {
   it("creates a project and switches the active project", () => {
     const initial = {
-      version: 1 as const,
+      version: 2 as const,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [EXAMPLE_PROJECT],
     };
@@ -29,7 +29,7 @@ describe("project and scenario view models", () => {
 
   it("duplicates a project and remaps its dependency identities", () => {
     const initial = {
-      version: 1 as const,
+      version: 2 as const,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [EXAMPLE_PROJECT],
     };
@@ -55,6 +55,32 @@ describe("project and scenario view models", () => {
     };
     const restored = restoreScenario(changed, saved.scenarios[0]?.id ?? "");
     expect(restored.nodes[0]?.durationMs).toBe(baseline.nodes[0]?.durationMs);
+  });
+
+  it("describes unlimited timeout changes in snapshot comparisons", () => {
+    const baseline = {
+      ...EXAMPLE_PROJECT,
+      nodes: EXAMPLE_PROJECT.nodes.slice(0, 1),
+    };
+    const opened = {
+      ...baseline,
+      nodes: baseline.nodes.map((node) => ({ ...node, timeoutMs: null })),
+    };
+    const baselineSnapshot = saveScenario(
+      baseline,
+      simulateProject(baseline),
+      "阈值 800",
+    ).scenarios[0];
+    const openedSnapshot = saveScenario(
+      opened,
+      simulateProject(opened),
+      "不限超时",
+    ).scenarios[0];
+    if (!baselineSnapshot || !openedSnapshot)
+      throw new Error("Scenario fixtures should be saved");
+    const comparison = compareScenarios(baselineSnapshot, openedSnapshot);
+    expect(comparison.changes.join(" ")).toContain("不限");
+    expect(comparison.changes.join(" ")).not.toContain("null");
   });
 
   it("describes node and concurrency differences between snapshots", () => {

@@ -99,4 +99,43 @@ describe("request dependency graph", () => {
     expect(next.nodes[0]?.durationMs).toBe(400);
     expect(next.nodes[0]?.dependencyIds).toEqual([]);
   });
+
+  it("treats timeout 0 as an immediate cutoff and null as unlimited", () => {
+    const base = {
+      id: "a",
+      name: "api",
+      durationMs: 300,
+      jitterMs: 0,
+      dependencyIds: [] as string[],
+      retryCount: 0,
+      failureRate: 0,
+    };
+    const cutoff = simulateProject({
+      ...EXAMPLE_PROJECT,
+      nodes: [{ ...base, timeoutMs: 0 }],
+    });
+    expect(cutoff.completionMs).toBe(0);
+    expect(cutoff.warnings.join(" ")).toContain("超时截断");
+    const unlimited = simulateProject({
+      ...EXAMPLE_PROJECT,
+      nodes: [{ ...base, timeoutMs: null }],
+    });
+    expect(unlimited.completionMs).toBe(300);
+    expect(unlimited.warnings.join(" ")).not.toContain("超时截断");
+  });
+
+  it("accepts null timeout and rejects negative values like the panel does", () => {
+    const base = EXAMPLE_PROJECT.nodes[0];
+    if (!base) throw new Error("Example project should have nodes");
+    const negative = analyzeGraph({
+      ...EXAMPLE_PROJECT,
+      nodes: [{ ...base, timeoutMs: -5 }],
+    });
+    expect(negative.validation.errors.join(" ")).toContain("超时");
+    const unlimited = analyzeGraph({
+      ...EXAMPLE_PROJECT,
+      nodes: [{ ...base, timeoutMs: null }],
+    });
+    expect(unlimited.validation.errors).toHaveLength(0);
+  });
 });

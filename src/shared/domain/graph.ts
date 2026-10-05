@@ -21,8 +21,11 @@ export function analyzeGraph(project: LatencyProject): GraphAnalysis {
       errors.push(`${node.name}: 耗时必须大于等于 0`);
     if (node.jitterMs < 0 || !Number.isFinite(node.jitterMs))
       errors.push(`${node.name}: 波动范围必须大于等于 0`);
-    if (node.timeoutMs < 0 || !Number.isFinite(node.timeoutMs))
-      errors.push(`${node.name}: 超时必须大于等于 0`);
+    if (
+      node.timeoutMs !== null &&
+      (node.timeoutMs < 0 || !Number.isFinite(node.timeoutMs))
+    )
+      errors.push(`${node.name}: 超时必须大于等于 0，或留空表示不限制`);
     if (
       !Number.isInteger(node.retryCount) ||
       node.retryCount < 0 ||

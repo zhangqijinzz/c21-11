@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ProjectRepository } from "../src/shared/repositories/projectRepository";
+import { simulateProject } from "../src/shared/domain/simulation";
 import {
   EXAMPLE_PROJECT,
   type WorkspaceDocument,
@@ -33,7 +34,7 @@ describe("project repository recovery", () => {
     const storage = new MemoryStorage();
     const repository = new ProjectRepository(storage);
     const document: WorkspaceDocument = {
-      version: 1,
+      version: 2,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [structuredClone(EXAMPLE_PROJECT)],
     };
@@ -49,7 +50,7 @@ describe("project repository recovery", () => {
   it("keeps readable projects while dropping malformed project rows and broken edges", async () => {
     const storage = new MemoryStorage();
     storage.value = {
-      version: 1,
+      version: 2,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [
         {
@@ -74,7 +75,7 @@ describe("project repository recovery", () => {
     storage.failWrite = true;
     const repository = new ProjectRepository(storage);
     const document: WorkspaceDocument = {
-      version: 1,
+      version: 2,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [structuredClone(EXAMPLE_PROJECT)],
     };
@@ -85,5 +86,71 @@ describe("project repository recovery", () => {
     const loaded = await repository.load();
     expect(loaded.document.projects[0]?.id).toBe(EXAMPLE_PROJECT.id);
     expect(loaded.recovered).toBe(true);
+  });
+
+  it("migrates legacy zero timeouts to unlimited so saved budgets stay stable", async () => {
+    const storage = new MemoryStorage();
+    const legacyNode = {
+      id: "legacy-api",
+      name: "旧接口",
+      durationMs: 300,
+      jitterMs: 0,
+      dependencyIds: [] as string[],
+      timeoutMs: 0,
+      retryCount: 0,
+      failureRate: 0,
+    };
+    storage.value = {
+      version: 1,
+      activeProjectId: EXAMPLE_PROJECT.id,
+      projects: [
+        {
+          ...EXAMPLE_PROJECT,
+          nodes: [legacyNode],
+          scenarios: [
+            {
+              id: "legacy-scenario",
+              name: "旧方案",
+              createdAt: 1,
+              concurrencyLimit: null,
+              completionMs: 300,
+              nodes: [{ ...legacyNode }],
+              criticalPath: ["legacy-api"],
+            },
+          ],
+        },
+      ],
+    };
+    const loaded = await new ProjectRepository(storage).load();
+    expect(loaded.recovered).toBe(true);
+    const project = loaded.document.projects[0];
+    expect(loaded.document.version).toBe(2);
+    expect(project?.nodes[0]?.timeoutMs).toBeNull();
+    // 历史数据里的 0 在旧推演中表示“不限制”，迁移后完成时间不变
+    expect(project ? simulateProject(project).completionMs : 0).toBe(300);
+    // 快照里的节点同样迁移，已保存的完成时间原样保留
+    expect(project?.scenarios[0]?.nodes[0]?.timeoutMs).toBeNull();
+    expect(project?.scenarios[0]?.completionMs).toBe(300);
+  });
+
+  it("keeps literal zero and unlimited timeouts distinct in current documents", async () => {
+    const storage = new MemoryStorage();
+    const repository = new ProjectRepository(storage);
+    const [sessionNode, flagsNode] = EXAMPLE_PROJECT.nodes;
+    if (!sessionNode || !flagsNode)
+      throw new Error("Example project should have nodes");
+    const zeroNode = { ...sessionNode, id: "zero", timeoutMs: 0 };
+    const openNode = { ...flagsNode, id: "open", timeoutMs: null };
+    const project = { ...EXAMPLE_PROJECT, nodes: [zeroNode, openNode] };
+    const document: WorkspaceDocument = {
+      version: 2,
+      activeProjectId: project.id,
+      projects: [project],
+    };
+    await repository.save(document);
+    const loaded = await repository.load();
+    expect(loaded.recovered).toBe(false);
+    expect(loaded.document.projects[0]?.nodes[0]?.timeoutMs).toBe(0);
+    expect(loaded.document.projects[0]?.nodes[1]?.timeoutMs).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ import {
 import { IndexedDbService } from "../services/indexedDbService";
 
 const FALLBACK_KEY = "latency-lab.workspace.v1";
+const WORKSPACE_VERSION = 2;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -17,7 +18,15 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function parseNode(value: unknown): RequestNode | undefined {
+interface ParsedNode {
+  node: RequestNode;
+  recovered: boolean;
+}
+
+function parseNode(
+  value: unknown,
+  legacyZeroTimeout: boolean,
+): ParsedNode | undefined {
   if (!isRecord(value)) return undefined;
   const {
     id,
@@ -39,27 +48,47 @@ function parseNode(value: unknown): RequestNode | undefined {
   if (
     !isFiniteNumber(durationMs) ||
     !isFiniteNumber(jitterMs) ||
-    !isFiniteNumber(timeoutMs) ||
     !isFiniteNumber(retryCount) ||
     !isFiniteNumber(failureRate)
   )
     return undefined;
+  let recovered = false;
+  let parsedTimeout: number | null;
+  if (timeoutMs === null) {
+    parsedTimeout = null;
+  } else if (isFiniteNumber(timeoutMs)) {
+    if (legacyZeroTimeout && timeoutMs === 0) {
+      // v1 文档里的 0 在旧推演中表示“不限制”，迁移为 null 以保持原含义。
+      parsedTimeout = null;
+      recovered = true;
+    } else {
+      parsedTimeout = timeoutMs;
+    }
+  } else {
+    return undefined;
+  }
   return {
-    id,
-    name,
-    durationMs,
-    jitterMs,
-    dependencyIds: dependencyIds.filter(
-      (id): id is string => typeof id === "string",
-    ),
-    timeoutMs,
-    retryCount,
-    failureRate,
-    ...(typeof fallbackNodeId === "string" ? { fallbackNodeId } : {}),
+    node: {
+      id,
+      name,
+      durationMs,
+      jitterMs,
+      dependencyIds: dependencyIds.filter(
+        (id): id is string => typeof id === "string",
+      ),
+      timeoutMs: parsedTimeout,
+      retryCount,
+      failureRate,
+      ...(typeof fallbackNodeId === "string" ? { fallbackNodeId } : {}),
+    },
+    recovered,
   };
 }
 
-function parseScenario(value: unknown): ScenarioSnapshot | undefined {
+function parseScenario(
+  value: unknown,
+  legacyZeroTimeout: boolean,
+): { scenario: ScenarioSnapshot; recovered: boolean } | undefined {
   if (
     !isRecord(value) ||
     !Array.isArray(value.nodes) ||
@@ -74,26 +103,37 @@ function parseScenario(value: unknown): ScenarioSnapshot | undefined {
     typeof completionMs !== "number"
   )
     return undefined;
+  const parsedNodes = value.nodes.map((node) =>
+    parseNode(node, legacyZeroTimeout),
+  );
+  const nodes = parsedNodes
+    .filter((entry): entry is ParsedNode => Boolean(entry))
+    .map((entry) => entry.node);
+  const recovered =
+    parsedNodes.some((entry) => entry?.recovered) ||
+    nodes.length !== parsedNodes.length;
   return {
-    id,
-    name,
-    createdAt,
-    completionMs,
-    concurrencyLimit:
-      typeof concurrencyLimit === "number" && concurrencyLimit > 0
-        ? concurrencyLimit
-        : null,
-    nodes: value.nodes
-      .map(parseNode)
-      .filter((node): node is RequestNode => Boolean(node)),
-    criticalPath: value.criticalPath.filter(
-      (id): id is string => typeof id === "string",
-    ),
+    scenario: {
+      id,
+      name,
+      createdAt,
+      completionMs,
+      concurrencyLimit:
+        typeof concurrencyLimit === "number" && concurrencyLimit > 0
+          ? concurrencyLimit
+          : null,
+      nodes,
+      criticalPath: value.criticalPath.filter(
+        (id): id is string => typeof id === "string",
+      ),
+    },
+    recovered,
   };
 }
 
 function parseProject(
   value: unknown,
+  legacyZeroTimeout: boolean,
 ): { project: LatencyProject; recovered: boolean } | undefined {
   if (
     !isRecord(value) ||
@@ -102,13 +142,18 @@ function parseProject(
   )
     return undefined;
   const sourceNodes = Array.isArray(value.nodes) ? value.nodes : [];
-  const parsedNodes = sourceNodes.map(parseNode);
-  const nodes = parsedNodes.filter((node): node is RequestNode =>
-    Boolean(node),
+  const parsedNodes = sourceNodes.map((node) =>
+    parseNode(node, legacyZeroTimeout),
   );
+  const readableNodes = parsedNodes.filter((entry): entry is ParsedNode =>
+    Boolean(entry),
+  );
+  const nodes = readableNodes.map((entry) => entry.node);
   const nodeIds = new Set(nodes.map((node) => node.id));
   let recovered =
-    !Array.isArray(value.nodes) || nodes.length !== sourceNodes.length;
+    !Array.isArray(value.nodes) ||
+    readableNodes.length !== sourceNodes.length ||
+    readableNodes.some((entry) => entry.recovered);
   const safeNodes = nodes.map((node) => {
     const dependencyIds = node.dependencyIds.filter(
       (id) => id !== node.id && nodeIds.has(id),
@@ -133,12 +178,19 @@ function parseProject(
     };
   });
   const scenarioSource = Array.isArray(value.scenarios) ? value.scenarios : [];
-  const scenarios = scenarioSource
-    .map(parseScenario)
-    .filter((scenario): scenario is ScenarioSnapshot => Boolean(scenario));
+  const parsedScenarios = scenarioSource.map((scenario) =>
+    parseScenario(scenario, legacyZeroTimeout),
+  );
+  const scenarios = parsedScenarios
+    .filter(
+      (entry): entry is { scenario: ScenarioSnapshot; recovered: boolean } =>
+        Boolean(entry),
+    )
+    .map((entry) => entry.scenario);
   if (
     !Array.isArray(value.scenarios) ||
-    scenarios.length !== scenarioSource.length
+    scenarios.length !== scenarioSource.length ||
+    parsedScenarios.some((entry) => entry?.recovered)
   )
     recovered = true;
   const now = Date.now();
@@ -166,9 +218,14 @@ function parseProject(
 function parseWorkspace(
   value: unknown,
 ): { document: WorkspaceDocument; recovered: boolean } | undefined {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.projects))
+  if (!isRecord(value) || !Array.isArray(value.projects)) return undefined;
+  if (value.version !== 1 && value.version !== WORKSPACE_VERSION)
     return undefined;
-  const parsed = value.projects.map(parseProject);
+  // v1 文档中 timeoutMs 为 0 表示“不限制”；v2 起 0 是普通的 0 ms 阈值。
+  const legacyZeroTimeout = value.version === 1;
+  const parsed = value.projects.map((project) =>
+    parseProject(project, legacyZeroTimeout),
+  );
   const projects = parsed
     .filter((entry): entry is { project: LatencyProject; recovered: boolean } =>
       Boolean(entry),
@@ -185,7 +242,10 @@ function parseWorkspace(
   const recovered =
     projects.length !== parsed.length ||
     parsed.some((entry) => entry?.recovered);
-  return { document: { version: 1, activeProjectId, projects }, recovered };
+  return {
+    document: { version: WORKSPACE_VERSION, activeProjectId, projects },
+    recovered,
+  };
 }
 
 export interface WorkspaceStorage {
@@ -224,7 +284,7 @@ export class ProjectRepository {
     }
     return {
       document: {
-        version: 1,
+        version: WORKSPACE_VERSION,
         activeProjectId: EXAMPLE_PROJECT.id,
         projects: [structuredClone(EXAMPLE_PROJECT)],
       },
