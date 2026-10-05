@@ -1,11 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { analyzeGraph } from "../src/shared/domain/graph";
-import { EXAMPLE_PROJECT } from "../src/shared/domain/types";
+import { EXAMPLE_PROJECT, type RequestNode } from "../src/shared/domain/types";
 import { simulateProject } from "../src/shared/domain/simulation";
 import {
   addRequestNode,
   toggleDependency,
 } from "../src/features/graph-editor/graphViewModel";
+import {
+  MAX_DURATION_MS,
+  NO_TIMEOUT_MS,
+  coerceTimeoutInput,
+  formatTimeoutMs,
+} from "../src/shared/domain/nodeFields";
+
+function singleNodeProject(patch: Partial<RequestNode>) {
+  const node = {
+    id: "only",
+    name: "单节点",
+    durationMs: 500,
+    jitterMs: 0,
+    dependencyIds: [],
+    timeoutMs: 1000,
+    retryCount: 0,
+    failureRate: 0,
+    ...patch,
+  };
+  return { ...EXAMPLE_PROJECT, nodes: [node] };
+}
 
 describe("request dependency graph", () => {
   it("orders a DAG and detects a cycle before simulation", () => {
@@ -98,5 +119,87 @@ describe("request dependency graph", () => {
     expect(next.nodes).toHaveLength(1);
     expect(next.nodes[0]?.durationMs).toBe(400);
     expect(next.nodes[0]?.dependencyIds).toEqual([]);
+  });
+});
+
+describe("timeout threshold semantics", () => {
+  it("treats 0 as a 0ms threshold that truncates the attempt immediately", () => {
+    const zero = singleNodeProject({ durationMs: 500, timeoutMs: 0 });
+    const result = simulateProject(zero, "high");
+    expect(result.entries).toHaveLength(1);
+    expect(result.completionMs).toBe(0);
+    expect(result.warnings.join(" ")).toContain("超时");
+  });
+
+  it("uses only the explicit sentinel for an unbounded timeout", () => {
+    const unbounded = singleNodeProject({
+      durationMs: 500,
+      timeoutMs: NO_TIMEOUT_MS,
+    });
+    const result = simulateProject(unbounded, "high");
+    expect(result.completionMs).toBe(500);
+    expect(result.warnings.join(" ")).not.toContain("超时");
+  });
+
+  it("distinguishes the same graph under 0ms, finite and unbounded thresholds", () => {
+    const atZero = simulateProject(
+      singleNodeProject({ durationMs: 500, timeoutMs: 0 }),
+      "expected",
+    ).completionMs;
+    const finite = simulateProject(
+      singleNodeProject({ durationMs: 500, timeoutMs: 300 }),
+      "expected",
+    ).completionMs;
+    const unbounded = simulateProject(
+      singleNodeProject({ durationMs: 500, timeoutMs: NO_TIMEOUT_MS }),
+      "expected",
+    ).completionMs;
+    expect(atZero).toBe(0);
+    expect(finite).toBe(300);
+    expect(unbounded).toBe(500);
+  });
+
+  it("rejects negative, decimal and over-limit thresholds like the panel limits", () => {
+    for (const timeoutMs of [-2, 0.5, MAX_DURATION_MS + 1, Number.NaN]) {
+      const errors = analyzeGraph(
+        singleNodeProject({ timeoutMs }),
+      ).validation.errors.join(" ");
+      expect(errors).toContain("超时");
+    }
+    expect(
+      analyzeGraph(singleNodeProject({ timeoutMs: NO_TIMEOUT_MS })).validation
+        .errors,
+    ).toEqual([]);
+  });
+
+  it("rejects decimals and over-limit values for the other numeric fields", () => {
+    expect(
+      analyzeGraph(
+        singleNodeProject({ durationMs: 12.5 }),
+      ).validation.errors.join(" "),
+    ).toContain("预计耗时");
+    expect(
+      analyzeGraph(
+        singleNodeProject({ durationMs: MAX_DURATION_MS + 1 }),
+      ).validation.errors.join(" "),
+    ).toContain("预计耗时");
+    expect(
+      analyzeGraph(singleNodeProject({ jitterMs: -1 })).validation.errors.join(
+        " ",
+      ),
+    ).toContain("延迟波动");
+    expect(
+      analyzeGraph(
+        singleNodeProject({ failureRate: 2.5 }),
+      ).validation.errors.join(" "),
+    ).toContain("失败概率");
+  });
+
+  it("maps a cleared input to the sentinel while an explicit 0 stays 0ms", () => {
+    expect(coerceTimeoutInput("")).toBe(NO_TIMEOUT_MS);
+    expect(coerceTimeoutInput("   ")).toBe(NO_TIMEOUT_MS);
+    expect(coerceTimeoutInput("0")).toBe(0);
+    expect(formatTimeoutMs(NO_TIMEOUT_MS)).toBe("不限制");
+    expect(formatTimeoutMs(0)).toBe("0 ms");
   });
 });

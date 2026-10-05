@@ -2,6 +2,13 @@ import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import type { LatencyProject, RequestNode } from "../../shared/domain/types";
 import type { EditableNodeField } from "./graphViewModel";
+import {
+  NODE_FIELD_RULES,
+  NO_TIMEOUT_MS,
+  DEFAULT_TIMEOUT_MS,
+  coerceTimeoutInput,
+  isNoTimeout,
+} from "../../shared/domain/nodeFields";
 
 interface Props {
   project: LatencyProject;
@@ -11,18 +18,18 @@ interface Props {
   onDependency: (id: string, dependencyId: string) => void;
 }
 
+type NumericKey = Exclude<EditableNodeField, "name">;
+
 const numericFields: {
-  key: Exclude<EditableNodeField, "name">;
+  key: NumericKey;
   label: string;
   suffix: string;
-  step: number;
-  max?: number;
 }[] = [
-  { key: "durationMs", label: "预计耗时", suffix: "ms", step: 10 },
-  { key: "jitterMs", label: "延迟波动", suffix: "±ms", step: 10 },
-  { key: "timeoutMs", label: "超时阈值", suffix: "ms", step: 50 },
-  { key: "retryCount", label: "重试次数", suffix: "次", step: 1, max: 8 },
-  { key: "failureRate", label: "失败概率", suffix: "%", step: 1, max: 100 },
+  { key: "durationMs", label: "预计耗时", suffix: "ms" },
+  { key: "jitterMs", label: "延迟波动", suffix: "±ms" },
+  { key: "timeoutMs", label: "超时阈值", suffix: "ms" },
+  { key: "retryCount", label: "重试次数", suffix: "次" },
+  { key: "failureRate", label: "失败概率", suffix: "%" },
 ];
 
 export default function NodeInspector({
@@ -33,6 +40,7 @@ export default function NodeInspector({
   onDependency,
 }: Props) {
   const [pendingDelete, setPendingDelete] = useState(false);
+  const timeoutUnlimited = isNoTimeout(node.timeoutMs);
   return (
     <>
       <aside className="inspector">
@@ -56,24 +64,57 @@ export default function NodeInspector({
           />
         </label>
         <div className="field-grid">
-          {numericFields.map(({ key, label, suffix, step, max }) => (
-            <label className="field-label" key={key}>
-              {label}
-              <span className="number-wrap">
-                <input
-                  type="number"
-                  min="0"
-                  max={max}
-                  step={step}
-                  value={node[key]}
-                  onChange={(event) =>
-                    onPatch(node.id, { [key]: Number(event.target.value) })
-                  }
-                />
-                <small>{suffix}</small>
-              </span>
-            </label>
-          ))}
+          {numericFields.map(({ key, label, suffix }) => {
+            const rule = NODE_FIELD_RULES[key];
+            const isTimeout = key === "timeoutMs";
+            return (
+              <div className="field-label" key={key}>
+                {label}
+                <span className="number-wrap">
+                  <input
+                    type="number"
+                    min={rule.min}
+                    max={rule.max}
+                    step={rule.step}
+                    disabled={isTimeout && timeoutUnlimited}
+                    value={isTimeout && timeoutUnlimited ? "" : node[key]}
+                    onChange={(event) =>
+                      onPatch(node.id, {
+                        [key]: isTimeout
+                          ? coerceTimeoutInput(event.target.value)
+                          : Number(event.target.value),
+                      })
+                    }
+                  />
+                  <small>
+                    {isTimeout && timeoutUnlimited ? "不限制" : suffix}
+                  </small>
+                </span>
+                {isTimeout && (
+                  <>
+                    <label className="timeout-toggle">
+                      <input
+                        type="checkbox"
+                        checked={timeoutUnlimited}
+                        onChange={(event) =>
+                          onPatch(node.id, {
+                            timeoutMs: event.target.checked
+                              ? NO_TIMEOUT_MS
+                              : DEFAULT_TIMEOUT_MS,
+                          })
+                        }
+                      />
+                      <span>不限制超时</span>
+                    </label>
+                    <small className="field-note">
+                      单位为毫秒：填 0 表示
+                      0ms（立即截断）；不限制请勾选上方选项。
+                    </small>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
         <div className="dependency-section">
           <div className="field-title">

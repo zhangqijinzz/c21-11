@@ -1254,6 +1254,19 @@ button:disabled {
   font-size: 8px;
   line-height: 1.5;
 }
+.timeout-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  color: #5f6a60;
+  font-size: 10px;
+  cursor: pointer;
+}
+.timeout-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
 .warning-strip {
   margin-top: 14px;
   color: #8a7541;

@@ -1,5 +1,6 @@
 import { analyzeGraph, updateNode } from "../../shared/domain/graph";
 import type { GraphAnalysis } from "../../shared/domain/graph";
+import { DEFAULT_TIMEOUT_MS } from "../../shared/domain/nodeFields";
 import type { LatencyProject, RequestNode } from "../../shared/domain/types";
 
 export type EditableNodeField =
@@ -22,7 +23,7 @@ export function addRequestNode(project: LatencyProject): LatencyProject {
     durationMs: 400,
     jitterMs: 80,
     dependencyIds: [],
-    timeoutMs: 1200,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
     retryCount: 0,
     failureRate: 0,
   };

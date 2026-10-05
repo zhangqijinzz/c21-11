@@ -4,6 +4,7 @@ import {
   EXAMPLE_PROJECT,
   type WorkspaceDocument,
 } from "../src/shared/domain/types";
+import { simulateProject } from "../src/shared/domain/simulation";
 
 class MemoryStorage {
   value: unknown = undefined;
@@ -33,7 +34,7 @@ describe("project repository recovery", () => {
     const storage = new MemoryStorage();
     const repository = new ProjectRepository(storage);
     const document: WorkspaceDocument = {
-      version: 1,
+      version: 2,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [structuredClone(EXAMPLE_PROJECT)],
     };
@@ -74,7 +75,7 @@ describe("project repository recovery", () => {
     storage.failWrite = true;
     const repository = new ProjectRepository(storage);
     const document: WorkspaceDocument = {
-      version: 1,
+      version: 2,
       activeProjectId: EXAMPLE_PROJECT.id,
       projects: [structuredClone(EXAMPLE_PROJECT)],
     };
@@ -85,5 +86,98 @@ describe("project repository recovery", () => {
     const loaded = await repository.load();
     expect(loaded.document.projects[0]?.id).toBe(EXAMPLE_PROJECT.id);
     expect(loaded.recovered).toBe(true);
+  });
+
+  it("migrates legacy v1 timeout zeroes to the no-timeout sentinel", async () => {
+    const storage = new MemoryStorage();
+    storage.value = {
+      version: 1,
+      activeProjectId: "legacy",
+      projects: [
+        {
+          id: "legacy",
+          title: "旧方案",
+          createdAt: 1,
+          updatedAt: 1,
+          concurrencyLimit: null,
+          nodes: [
+            {
+              id: "n0",
+              name: "旧节点",
+              durationMs: 500,
+              jitterMs: 0,
+              dependencyIds: [],
+              timeoutMs: 0,
+              retryCount: 0,
+              failureRate: 0,
+            },
+          ],
+          scenarios: [
+            {
+              id: "s0",
+              name: "旧快照",
+              createdAt: 1,
+              concurrencyLimit: null,
+              completionMs: 500,
+              criticalPath: ["n0"],
+              nodes: [
+                {
+                  id: "n0",
+                  name: "旧节点",
+                  durationMs: 500,
+                  jitterMs: 0,
+                  dependencyIds: [],
+                  timeoutMs: 0,
+                  retryCount: 0,
+                  failureRate: 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const loaded = await new ProjectRepository(storage).load();
+    expect(loaded.document.version).toBe(2);
+    expect(loaded.document.projects[0]?.nodes[0]?.timeoutMs).toBe(-1);
+    expect(loaded.document.projects[0]?.scenarios[0]?.nodes[0]?.timeoutMs).toBe(
+      -1,
+    );
+    // 迁移后按新规则重算，预算与旧语义一致，不会因 0 变成 0ms 而凭空变化。
+    const migrated = simulateProject(loaded.document.projects[0]!, "expected");
+    expect(migrated.completionMs).toBe(500);
+    expect(migrated.warnings.join(" ")).not.toContain("超时");
+  });
+
+  it("keeps a v2 zero as a 0ms threshold instead of re-migrating it", async () => {
+    const storage = new MemoryStorage();
+    storage.value = {
+      version: 2,
+      activeProjectId: "fresh",
+      projects: [
+        {
+          id: "fresh",
+          title: "新方案",
+          createdAt: 1,
+          updatedAt: 1,
+          concurrencyLimit: null,
+          nodes: [
+            {
+              id: "n0",
+              name: "新节点",
+              durationMs: 500,
+              jitterMs: 0,
+              dependencyIds: [],
+              timeoutMs: 0,
+              retryCount: 0,
+              failureRate: 0,
+            },
+          ],
+          scenarios: [],
+        },
+      ],
+    };
+    const loaded = await new ProjectRepository(storage).load();
+    expect(loaded.document.projects[0]?.nodes[0]?.timeoutMs).toBe(0);
   });
 });

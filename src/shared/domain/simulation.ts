@@ -1,4 +1,5 @@
 import { analyzeGraph } from "./graph";
+import { isNoTimeout } from "./nodeFields";
 import type {
   LatencyProject,
   RequestNode,
@@ -9,9 +10,13 @@ import type {
 
 function expectedAttempts(node: RequestNode, mode: SimulationMode): number {
   const jitterFactor = mode === "low" ? 0 : mode === "high" ? 1 : 0.5;
+  // 仅显式哨兵表示不限制；0 仍是 0ms 阈值，会把单次耗时截断为 0。
+  const timeoutCap = isNoTimeout(node.timeoutMs)
+    ? Number.POSITIVE_INFINITY
+    : node.timeoutMs;
   const serviceMs = Math.min(
     node.durationMs + node.jitterMs * jitterFactor,
-    node.timeoutMs || Number.POSITIVE_INFINITY,
+    timeoutCap,
   );
   const failure = node.failureRate / 100;
   let elapsed = 0;
@@ -131,7 +136,7 @@ export function simulateProject(
   if (
     project.nodes.some(
       (node) =>
-        node.timeoutMs > 0 &&
+        !isNoTimeout(node.timeoutMs) &&
         node.durationMs +
           node.jitterMs *
             (mode === "high" ? 1 : mode === "expected" ? 0.5 : 0) >

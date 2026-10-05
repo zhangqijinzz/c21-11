@@ -1,4 +1,9 @@
 import type { LatencyProject, RequestNode, ValidationResult } from "./types";
+import {
+  NODE_FIELD_RULES,
+  isValidFiniteField,
+  isValidTimeoutMs,
+} from "./nodeFields";
 
 export interface GraphAnalysis {
   order: string[];
@@ -17,20 +22,22 @@ export function analyzeGraph(project: LatencyProject): GraphAnalysis {
 
   for (const node of project.nodes) {
     if (!node.name.trim()) errors.push(`${node.id}: 节点名称不能为空`);
-    if (node.durationMs < 0 || !Number.isFinite(node.durationMs))
-      errors.push(`${node.name}: 耗时必须大于等于 0`);
-    if (node.jitterMs < 0 || !Number.isFinite(node.jitterMs))
-      errors.push(`${node.name}: 波动范围必须大于等于 0`);
-    if (node.timeoutMs < 0 || !Number.isFinite(node.timeoutMs))
-      errors.push(`${node.name}: 超时必须大于等于 0`);
-    if (
-      !Number.isInteger(node.retryCount) ||
-      node.retryCount < 0 ||
-      node.retryCount > 8
-    )
-      errors.push(`${node.name}: 重试次数需在 0–8 次`);
-    if (node.failureRate < 0 || node.failureRate > 100)
-      errors.push(`${node.name}: 失败概率需在 0–100%`);
+    if (!isValidFiniteField(node.durationMs, "durationMs"))
+      errors.push(
+        `${node.name}: 预计耗时需为 ${NODE_FIELD_RULES.durationMs.min}–${NODE_FIELD_RULES.durationMs.max}ms 的整数`,
+      );
+    if (!isValidFiniteField(node.jitterMs, "jitterMs"))
+      errors.push(
+        `${node.name}: 延迟波动需为 ${NODE_FIELD_RULES.jitterMs.min}–${NODE_FIELD_RULES.jitterMs.max}ms 的整数`,
+      );
+    if (!isValidTimeoutMs(node.timeoutMs))
+      errors.push(
+        `${node.name}: 超时需为 ${NODE_FIELD_RULES.timeoutMs.min}–${NODE_FIELD_RULES.timeoutMs.max}ms 的整数，或勾选“不限制”`,
+      );
+    if (!isValidFiniteField(node.retryCount, "retryCount"))
+      errors.push(`${node.name}: 重试次数需在 0–8 次的整数`);
+    if (!isValidFiniteField(node.failureRate, "failureRate"))
+      errors.push(`${node.name}: 失败概率需为 0–100% 的整数`);
     if (node.retryCount > 3)
       warnings.push(`${node.name}: 重试次数较高，可能放大尾延迟`);
     for (const dependencyId of node.dependencyIds) {

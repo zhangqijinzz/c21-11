@@ -6,6 +6,7 @@ import {
   type WorkspaceDocument,
 } from "../domain/types";
 import { IndexedDbService } from "../services/indexedDbService";
+import { migrateTimeoutMs } from "../domain/nodeFields";
 
 const FALLBACK_KEY = "latency-lab.workspace.v1";
 
@@ -17,7 +18,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function parseNode(value: unknown): RequestNode | undefined {
+function parseNode(
+  value: unknown,
+  legacyZeroMeansNoTimeout: boolean,
+): RequestNode | undefined {
   if (!isRecord(value)) return undefined;
   const {
     id,
@@ -52,14 +56,20 @@ function parseNode(value: unknown): RequestNode | undefined {
     dependencyIds: dependencyIds.filter(
       (id): id is string => typeof id === "string",
     ),
-    timeoutMs,
+    // 只有 v1 历史数据里的 0 才迁移；v2 的 0 保留 0ms 本义。
+    timeoutMs: legacyZeroMeansNoTimeout
+      ? migrateTimeoutMs(timeoutMs)
+      : timeoutMs,
     retryCount,
     failureRate,
     ...(typeof fallbackNodeId === "string" ? { fallbackNodeId } : {}),
   };
 }
 
-function parseScenario(value: unknown): ScenarioSnapshot | undefined {
+function parseScenario(
+  value: unknown,
+  legacyZeroMeansNoTimeout: boolean,
+): ScenarioSnapshot | undefined {
   if (
     !isRecord(value) ||
     !Array.isArray(value.nodes) ||
@@ -84,7 +94,7 @@ function parseScenario(value: unknown): ScenarioSnapshot | undefined {
         ? concurrencyLimit
         : null,
     nodes: value.nodes
-      .map(parseNode)
+      .map((node: unknown) => parseNode(node, legacyZeroMeansNoTimeout))
       .filter((node): node is RequestNode => Boolean(node)),
     criticalPath: value.criticalPath.filter(
       (id): id is string => typeof id === "string",
@@ -94,6 +104,7 @@ function parseScenario(value: unknown): ScenarioSnapshot | undefined {
 
 function parseProject(
   value: unknown,
+  legacyZeroMeansNoTimeout: boolean,
 ): { project: LatencyProject; recovered: boolean } | undefined {
   if (
     !isRecord(value) ||
@@ -102,7 +113,9 @@ function parseProject(
   )
     return undefined;
   const sourceNodes = Array.isArray(value.nodes) ? value.nodes : [];
-  const parsedNodes = sourceNodes.map(parseNode);
+  const parsedNodes = sourceNodes.map((node) =>
+    parseNode(node, legacyZeroMeansNoTimeout),
+  );
   const nodes = parsedNodes.filter((node): node is RequestNode =>
     Boolean(node),
   );
@@ -134,7 +147,7 @@ function parseProject(
   });
   const scenarioSource = Array.isArray(value.scenarios) ? value.scenarios : [];
   const scenarios = scenarioSource
-    .map(parseScenario)
+    .map((scenario) => parseScenario(scenario, legacyZeroMeansNoTimeout))
     .filter((scenario): scenario is ScenarioSnapshot => Boolean(scenario));
   if (
     !Array.isArray(value.scenarios) ||
@@ -166,9 +179,17 @@ function parseProject(
 function parseWorkspace(
   value: unknown,
 ): { document: WorkspaceDocument; recovered: boolean } | undefined {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.projects))
+  if (
+    !isRecord(value) ||
+    (value.version !== 1 && value.version !== 2) ||
+    !Array.isArray(value.projects)
+  )
     return undefined;
-  const parsed = value.projects.map(parseProject);
+  // 仅 v1 沿用“0 = 不限制”的旧语义并迁移；v2 的 0 保持 0ms。
+  const legacyZeroMeansNoTimeout = value.version === 1;
+  const parsed = value.projects.map((project) =>
+    parseProject(project, legacyZeroMeansNoTimeout),
+  );
   const projects = parsed
     .filter((entry): entry is { project: LatencyProject; recovered: boolean } =>
       Boolean(entry),
@@ -185,7 +206,8 @@ function parseWorkspace(
   const recovered =
     projects.length !== parsed.length ||
     parsed.some((entry) => entry?.recovered);
-  return { document: { version: 1, activeProjectId, projects }, recovered };
+  // v1 数据已完成语义迁移，统一按 v2 落库。
+  return { document: { version: 2, activeProjectId, projects }, recovered };
 }
 
 export interface WorkspaceStorage {
@@ -224,7 +246,7 @@ export class ProjectRepository {
     }
     return {
       document: {
-        version: 1,
+        version: 2,
         activeProjectId: EXAMPLE_PROJECT.id,
         projects: [structuredClone(EXAMPLE_PROJECT)],
       },

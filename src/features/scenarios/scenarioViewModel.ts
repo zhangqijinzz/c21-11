@@ -4,6 +4,7 @@ import type {
   ScenarioSnapshot,
   SimulationResult,
 } from "../../shared/domain/types";
+import { formatTimeoutMs } from "../../shared/domain/nodeFields";
 
 export interface ScenarioComparison {
   deltaMs: number;
@@ -26,7 +27,7 @@ function describeNodeChanges(
     );
   if (before.timeoutMs !== after.timeoutMs)
     changes.push(
-      `${before.name} · 超时 ${before.timeoutMs} → ${after.timeoutMs} ms`,
+      `${before.name} · 超时 ${formatTimeoutMs(before.timeoutMs)} → ${formatTimeoutMs(after.timeoutMs)}`,
     );
   if (before.retryCount !== after.retryCount)
     changes.push(

@@ -31,7 +31,11 @@ export interface LatencyProject {
 }
 
 export interface WorkspaceDocument {
-  version: 1;
+  /**
+   * v1：超时 0 表示不限制（旧语义，读取时迁移为哨兵）；
+   * v2：超时 0 表示 0ms 阈值，不限制使用显式哨兵 NO_TIMEOUT_MS。
+   */
+  version: 2;
   activeProjectId: string;
   projects: LatencyProject[];
 }
